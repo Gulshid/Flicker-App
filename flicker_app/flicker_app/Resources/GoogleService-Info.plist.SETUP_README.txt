@@ -1,0 +1,17 @@
+This folder needs your real GoogleService-Info.plist file.
+
+Steps:
+1. Go to https://console.firebase.google.com
+2. Create a project (stay on the Spark / free plan — do not upgrade to Blaze).
+3. Add an iOS app using your Xcode project's Bundle Identifier.
+4. Download GoogleService-Info.plist.
+5. Drag it into this Resources folder in Xcode.
+   - Make sure "Copy items if needed" is checked.
+   - Make sure it's added to your app target.
+6. Delete this .txt file once the real plist is in place.
+
+Also in the Firebase Console:
+- Authentication → Sign-in method → enable Email/Password (and Apple).
+- Firestore Database → Create database → start in production mode
+  (security rules are written properly in Phase 11 — don't leave this
+  open in test mode long-term).
