@@ -1,8 +1,8 @@
 import Foundation
 
 /// Mirrors the users/{uid} Firestore document.
-/// Fleshed out fully in Phase 3 — included now so Phase 2's
-/// onboarding/username-check code has a type to reference.
+/// Read/written directly via Firestore's Codable support
+/// (FirestoreService.fetchUser / createUserProfile) as of Phase 3.
 struct AppUser: Codable, Identifiable {
     var id: String            // Firebase Auth uid
     var username: String

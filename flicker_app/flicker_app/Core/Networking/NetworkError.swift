@@ -5,6 +5,8 @@ enum AppError: LocalizedError {
     case invalidInput(String)
     case uploadFailed(String)
     case firestoreError(String)
+    case compressionFailed
+    case notFound(String)
     case unknown(Error)
 
     var errorDescription: String? {
@@ -17,6 +19,10 @@ enum AppError: LocalizedError {
             return "Upload failed: \(msg)"
         case .firestoreError(let msg):
             return "Something went wrong: \(msg)"
+        case .compressionFailed:
+            return "Couldn't process that image. Try a different one."
+        case .notFound(let msg):
+            return msg
         case .unknown(let err):
             return err.localizedDescription
         }
