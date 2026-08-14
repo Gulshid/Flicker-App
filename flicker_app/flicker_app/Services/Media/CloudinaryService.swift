@@ -15,8 +15,8 @@ protocol MediaServiceProtocol {
 final class CloudinaryService: MediaServiceProtocol {
 
     // TODO: Replace with your own Cloudinary cloud name and unsigned preset name.
-    private let cloudName = "YOUR_CLOUD_NAME"
-    private let uploadPreset = "YOUR_UNSIGNED_PRESET"
+    private let cloudName = "df0saqabg"
+    private let uploadPreset = "flicker_unsigned"
 
     func uploadImage(_ data: Data, fileName: String) async throws -> String {
         guard let url = URL(string: "https://api.cloudinary.com/v1_1/\(cloudName)/image/upload") else {
