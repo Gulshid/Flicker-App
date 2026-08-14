@@ -1,7 +1,7 @@
 import SwiftUI
 
-// Placeholder tab shell.
-// Feed, Profile, Chat, Notifications tabs get built out in later phases.
+// Feed tab is still a placeholder (built out in Phase 5).
+// Profile tab is fully wired up as of Phase 3/4.
 struct MainTabView: View {
     @Environment(SessionStore.self) private var session
 
@@ -14,18 +14,15 @@ struct MainTabView: View {
                     Text("User ID: \(session.userId ?? "unknown")")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
-
-                    Button("Sign Out", role: .destructive) {
-                        try? DIContainer.shared.authService.signOut()
-                    }
-                    .buttonStyle(.bordered)
-                    .padding(.top, 24)
+                    Text("Feed — Phase 5")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
                 .navigationTitle("Home")
             }
             .tabItem { Label("Home", systemImage: "house.fill") }
 
-            Text("Profile — Phase 3")
+            ProfileView()
                 .tabItem { Label("Profile", systemImage: "person.fill") }
         }
     }
