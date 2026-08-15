@@ -19,6 +19,14 @@ struct ProfileView: View {
                         systemImage: "exclamationmark.triangle",
                         description: Text(errorMessage)
                     )
+                } else {
+                    // Covers the brief gap before .task sets isLoading = true,
+                    // and any state where loadCurrentUser() returned without
+                    // setting user or errorMessage (e.g. currentUserId was
+                    // nil for a moment). Without this branch the screen was
+                    // rendering nothing at all.
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             .navigationTitle("Profile")
