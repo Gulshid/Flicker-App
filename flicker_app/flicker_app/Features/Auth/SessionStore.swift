@@ -10,6 +10,13 @@ final class SessionStore {
     /// whether users/{uid} exists. Drives RootView's onboarding routing.
     var hasProfile: Bool?
 
+    /// Cached users/{uid} document for the signed-in user. Added in
+    /// Phase 5 so every screen that needs the current user's username/
+    /// avatar to denormalize onto a new post, comment, or like (see
+    /// CreatePostViewModel, PostDetailViewModel) can read it here
+    /// instead of re-fetching it from Firestore each time.
+    var currentUser: AppUser?
+
     private var handle: AuthStateDidChangeListenerHandle?
     private let firestoreService: FirestoreServiceProtocol
 
@@ -27,6 +34,7 @@ final class SessionStore {
 
             if uid == nil {
                 self.hasProfile = nil
+                self.currentUser = nil
             } else {
                 Task { await self.refreshProfileStatus() }
             }
@@ -39,16 +47,38 @@ final class SessionStore {
     func refreshProfileStatus() async {
         guard let uid = userId else {
             hasProfile = nil
+            currentUser = nil
             return
         }
         do {
             hasProfile = try await firestoreService.userExists(uid)
+            if hasProfile == true {
+                await refreshCurrentUser()
+            }
         } catch {
             // Network hiccup checking profile status — don't get the user
             // stuck; treat as "no profile yet" so onboarding is shown and
             // they can retry from there rather than seeing a blank screen.
             hasProfile = false
         }
+    }
+
+    /// Re-fetches and caches the current user's profile doc. Called after
+    /// onboarding creates it, and after EditProfileView saves a change,
+    /// so the cached copy used by post/comment creation stays in sync
+    /// with what's on the profile screen.
+    func refreshCurrentUser() async {
+        guard let uid = userId else { return }
+        currentUser = try? await firestoreService.fetchUser(uid)
+    }
+
+    /// Cheap local patch so a bio/avatar edit is reflected immediately
+    /// without a round trip — mirrors ProfileViewModel.applyLocalEdit.
+    func applyLocalProfileEdit(bio: String? = nil, avatarURL: String? = nil) {
+        guard var currentUser else { return }
+        if let bio { currentUser.bio = bio }
+        if let avatarURL { currentUser.avatarURL = avatarURL }
+        self.currentUser = currentUser
     }
 
     deinit {
