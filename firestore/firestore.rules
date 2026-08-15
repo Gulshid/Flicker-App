@@ -1,0 +1,187 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =================================================================
+    // users/{userId}
+    // =================================================================
+    match /users/{userId} {
+      // Any signed-in user can read profiles — needed for the username
+      // availability check (Phase 2), viewing other users' profiles
+      // (Phase 6), and the denormalized author blocks on posts/comments.
+      allow read: if request.auth != null;
+
+      // Only the owner can create their own profile doc, exactly once,
+      // right after reserving a username (Phase 3). Counts must start
+      // at zero — no client-side vanity stats on creation.
+      allow create: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasAll([
+             'username', 'usernameLowercase', 'followerCount',
+             'followingCount', 'postCount', 'createdAt'
+           ])
+        && request.resource.data.followerCount == 0
+        && request.resource.data.followingCount == 0
+        && request.resource.data.postCount == 0;
+
+      // Four distinct kinds of update land on this doc as of Phase 6:
+      //  1. The owner editing bio/avatarURL (Phase 3, Edit Profile).
+      //  2. The owner's own postCount moving by exactly ±1 when they
+      //     create/delete a post (Phase 5) — actor === doc owner.
+      //  3. The owner's own followingCount moving by exactly ±1 when
+      //     they follow/unfollow someone (Phase 6) — actor === owner.
+      //  4. THIS doc's followerCount moving by exactly ±1 when someone
+      //     ELSE follows/unfollows them (Phase 6) — the one branch that
+      //     can't require request.auth.uid == userId, since the actor
+      //     is the other party. Still safe: it can only ever touch
+      //     followerCount, by exactly one at a time, matching the only
+      //     thing FirestoreService.follow/unfollow ever writes here.
+      // Username is immutable from the client in every branch.
+      allow update: if request.auth != null && (
+        (request.auth.uid == userId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['bio', 'avatarURL']))
+        ||
+        (request.auth.uid == userId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['postCount'])
+          && (request.resource.data.postCount == resource.data.postCount + 1
+              || request.resource.data.postCount == resource.data.postCount - 1))
+        ||
+        (request.auth.uid == userId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['followingCount'])
+          && (request.resource.data.followingCount == resource.data.followingCount + 1
+              || request.resource.data.followingCount == resource.data.followingCount - 1))
+        ||
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['followerCount'])
+          && (request.resource.data.followerCount == resource.data.followerCount + 1
+              || request.resource.data.followerCount == resource.data.followerCount - 1))
+      );
+
+      allow delete: if false;
+
+      // -----------------------------------------------------------
+      // users/{userId}/followers/{followerId}  (Phase 6)
+      // Doc ID == the uid of the person doing the following. Written
+      // into the TARGET user's subcollection by the follower's own
+      // client (FirestoreService.follow/unfollow), so ownership is
+      // checked against the doc ID, not the parent userId.
+      // -----------------------------------------------------------
+      match /followers/{followerId} {
+        allow read: if request.auth != null;
+        allow create: if request.auth != null
+          && request.auth.uid == followerId
+          && followerId != userId;
+        allow delete: if request.auth != null && request.auth.uid == followerId;
+        allow update: if false;
+      }
+
+      // -----------------------------------------------------------
+      // users/{userId}/following/{followingId}  (Phase 6)
+      // Lives under the follower's own doc, so this one IS owner-only.
+      // -----------------------------------------------------------
+      match /following/{followingId} {
+        allow read: if request.auth != null;
+        allow create: if request.auth != null
+          && request.auth.uid == userId
+          && followingId != userId;
+        allow delete: if request.auth != null && request.auth.uid == userId;
+        allow update: if false;
+      }
+
+      // -----------------------------------------------------------
+      // users/{userId}/likedPosts/{postId}  (Phase 6)
+      // Reverse index of posts/{postId}/likes/{uid}, written in the
+      // same transaction as the source-of-truth like doc. Private to
+      // the owner — it's only ever read back as "did I like any of
+      // these posts" for that same user's own feed page.
+      // -----------------------------------------------------------
+      match /likedPosts/{postId} {
+        allow read, create, delete: if request.auth != null && request.auth.uid == userId;
+        allow update: if false;
+      }
+    }
+
+    // =================================================================
+    // posts/{postId}
+    // =================================================================
+    match /posts/{postId} {
+      allow read: if request.auth != null;
+
+      // Author must match the signed-in user; counts start at zero and
+      // get bumped separately (createPost's batch write handles
+      // postCount on the users doc; likeCount/commentCount only ever
+      // move via the update branches below).
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.authorId
+        && request.resource.data.keys().hasAll([
+             'authorId', 'authorUsername', 'mediaURLs',
+             'likeCount', 'commentCount', 'createdAt'
+           ])
+        && request.resource.data.mediaURLs.size() > 0
+        && request.resource.data.likeCount == 0
+        && request.resource.data.commentCount == 0;
+
+      // Same three-kinds-of-actor shape as users/{userId} above:
+      //  1. The post's own author editing the caption (Phase 5).
+      //  2. Any signed-in user's like moving likeCount by ±1
+      //     (toggleLike's transaction, Phase 6).
+      //  3. Any signed-in user's comment moving commentCount by ±1
+      //     (addComment/deleteComment, Phase 6).
+      allow update: if request.auth != null && (
+        (request.auth.uid == resource.data.authorId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['caption']))
+        ||
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount'])
+          && (request.resource.data.likeCount == resource.data.likeCount + 1
+              || request.resource.data.likeCount == resource.data.likeCount - 1))
+        ||
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['commentCount'])
+          && (request.resource.data.commentCount == resource.data.commentCount + 1
+              || request.resource.data.commentCount == resource.data.commentCount - 1))
+      );
+
+      allow delete: if request.auth != null && request.auth.uid == resource.data.authorId;
+
+      // -----------------------------------------------------------
+      // posts/{postId}/likes/{userId}  (Phase 6)
+      // Doc existence = liked; doc ID is the liking user's own uid,
+      // so ownership checks against the doc ID rather than the post.
+      // -----------------------------------------------------------
+      match /likes/{userId} {
+        allow read: if request.auth != null;
+        allow create, delete: if request.auth != null && request.auth.uid == userId;
+        allow update: if false;
+      }
+
+      // -----------------------------------------------------------
+      // posts/{postId}/comments/{commentId}  (Phase 6)
+      // -----------------------------------------------------------
+      match /comments/{commentId} {
+        allow read: if request.auth != null;
+        allow create: if request.auth != null
+          && request.auth.uid == request.resource.data.authorId
+          && request.resource.data.keys().hasAll(['authorId', 'authorUsername', 'text', 'createdAt'])
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 500;
+        // Deletable by the comment's own author, or by the post's
+        // author moderating their own post — matches
+        // PostDetailViewModel.canDelete exactly. The extra get() read
+        // only runs for the post-owner branch since && short-circuits.
+        allow delete: if request.auth != null && (
+          request.auth.uid == resource.data.authorId
+          || request.auth.uid == get(/databases/$(database)/documents/posts/$(postId)).data.authorId
+        );
+        allow update: if false;
+      }
+    }
+
+    // =================================================================
+    // chats/{chatId}/messages/{messageId} — Phase 7, not built yet.
+    // Everything else not matched above (chats included) stays locked
+    // until the feature that needs it actually lands.
+    // =================================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
