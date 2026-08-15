@@ -1,5 +1,6 @@
 import Foundation
 import PhotosUI
+import SwiftUI
 import Observation
 
 /// Per-item state for the create-post media grid, so the UI can show a

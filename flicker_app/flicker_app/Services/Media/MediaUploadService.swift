@@ -1,5 +1,6 @@
 import Foundation
 import PhotosUI
+import SwiftUI
 import Observation
 
 /// One reusable state machine for "pick a photo → compress → upload →
