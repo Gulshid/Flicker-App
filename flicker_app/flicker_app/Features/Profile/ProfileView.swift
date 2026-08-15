@@ -37,6 +37,7 @@ struct ProfileView: View {
                 if let user = viewModel.user {
                     EditProfileView(user: user) { bio, avatarURL in
                         viewModel.applyLocalEdit(bio: bio, avatarURL: avatarURL)
+                        session.applyLocalProfileEdit(bio: bio, avatarURL: avatarURL)
                     }
                 }
             }
@@ -69,6 +70,10 @@ struct ProfileView: View {
                     statColumn(count: user.followingCount, label: "Following")
                 }
                 .padding(.top, 8)
+
+                // Phase 5: the grid of the signed-in user's own posts.
+                PostGridView(authorId: user.id)
+                    .padding(.top, 20)
             }
             .padding(.top, 24)
             .frame(maxWidth: .infinity)
