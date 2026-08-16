@@ -7,6 +7,7 @@ import SwiftUI
 /// itself automatically (see FollowViewModel.isOwnProfile).
 struct UserProfileView: View {
     @State private var viewModel: UserProfileViewModel
+    @State private var activeChat: Chat?
 
     init(userId: String) {
         _viewModel = State(initialValue: UserProfileViewModel(userId: userId))
@@ -30,6 +31,11 @@ struct UserProfileView: View {
             .navigationTitle("Profile")
             .navigationBarTitleDisplayMode(.inline)
             .task { await viewModel.load() }
+            .sheet(item: $activeChat) { chat in
+                NavigationStack {
+                    ChatView(chat: chat)
+                }
+            }
         }
     }
 
@@ -50,7 +56,27 @@ struct UserProfileView: View {
                         .padding(.horizontal)
                 }
 
-                FollowButton(targetUserId: user.id)
+                HStack(spacing: 10) {
+                    FollowButton(targetUserId: user.id)
+                    if !viewModel.isOwnProfile {
+                        Button {
+                            Task {
+                                if let chat = await viewModel.startChat() {
+                                    activeChat = chat
+                                }
+                            }
+                        } label: {
+                            Text("Message")
+                                .font(.footnote.weight(.semibold))
+                                .frame(minWidth: 90)
+                                .padding(.vertical, 6)
+                                .background(Color.secondary.opacity(0.15))
+                                .foregroundStyle(Color.primary)
+                                .clipShape(Capsule())
+                        }
+                        .disabledWhileLoading(viewModel.isStartingChat)
+                    }
+                }
 
                 HStack(spacing: 32) {
                     statColumn(count: user.postCount, label: "Posts")
