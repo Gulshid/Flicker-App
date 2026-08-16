@@ -21,6 +21,7 @@ protocol FirestoreServiceProtocol {
     // Username / onboarding
     func isUsernameAvailable(_ username: String) async throws -> Bool
     func userExists(_ uid: String) async throws -> Bool
+    func findUser(byUsername username: String) async throws -> AppUser?
 
     // Profile (Phase 3)
     func createUserProfile(uid: String, username: String) async throws
@@ -35,12 +36,14 @@ protocol FirestoreServiceProtocol {
     func updatePostCaption(postId: String, caption: String?) async throws
     func deletePost(postId: String, authorId: String) async throws
 
-    // Likes (Phase 6)
-    func toggleLike(postId: String, userId: String) async throws -> Bool
+    // Likes (Phase 6). `postAuthorId` is only used to address the
+    // notification writen on a *new* like (Phase 8) — see writeNotification.
+    func toggleLike(postId: String, userId: String, postAuthorId: String) async throws -> Bool
     func fetchLikedPostIds(userId: String, among postIds: [String]) async throws -> Set<String>
 
-    // Comments (Phase 6)
-    func addComment(postId: String, authorId: String, authorUsername: String, authorAvatarURL: String?, text: String) async throws
+    // Comments (Phase 6). `postAuthorId` addresses the Phase 8 notification,
+    // same as toggleLike above.
+    func addComment(postId: String, postAuthorId: String, authorId: String, authorUsername: String, authorAvatarURL: String?, text: String) async throws
     func deleteComment(postId: String, commentId: String) async throws
     func observeComments(postId: String) -> AsyncStream<[Comment]>
 
@@ -49,6 +52,21 @@ protocol FirestoreServiceProtocol {
     func unfollow(currentUserId: String, targetUserId: String) async throws
     func isFollowing(currentUserId: String, targetUserId: String) async throws -> Bool
     func fetchFollowingIds(userId: String, limit: Int) async throws -> [String]
+
+    // Chat (Phase 7)
+    func chatId(for userId: String, and otherUserId: String) -> String
+    func createOrGetChat(currentUserId: String, currentUsername: String, currentAvatarURL: String?, otherUserId: String, otherUsername: String, otherAvatarURL: String?) async throws -> Chat
+    func sendMessage(chatId: String, senderId: String, text: String) async throws
+    func observeMessages(chatId: String) -> AsyncStream<[ChatMessage]>
+    func observeUserChats(userId: String) -> AsyncStream<[Chat]>
+    func observeChat(chatId: String) -> AsyncStream<Chat?>
+    func markChatRead(chatId: String, userId: String) async throws
+    func setTyping(chatId: String, userId: String, isTyping: Bool) async throws
+
+    // Notifications (Phase 8)
+    func observeNotifications(userId: String) -> AsyncStream<[AppNotification]>
+    func markNotificationRead(userId: String, notificationId: String) async throws
+    func markAllNotificationsRead(userId: String, among notificationIds: [String]) async throws
 }
 
 /// Thin wrapper around Firestore. Collection layout mirrors the schema in
@@ -63,6 +81,7 @@ final class FirestoreService: FirestoreServiceProtocol {
     // users/{uid}
     // users/{uid}/followers/{followerId}
     // users/{uid}/following/{followingId}
+    // users/{uid}/notifications/{notificationId}
     // posts/{postId}
     // posts/{postId}/likes/{userId}
     // posts/{postId}/comments/{commentId}
@@ -81,6 +100,10 @@ final class FirestoreService: FirestoreServiceProtocol {
         // "which of these posts did I like" with one batched query instead of
         // one read per post — see fetchLikedPostIds.
         static let likedPosts = "likedPosts"
+        // users/{uid}/notifications/{notificationId} — Phase 8, written by
+        // the actor's own client (see writeNotification), read by the
+        // recipient via observeNotifications.
+        static let notifications = "notifications"
     }
 
     private func userDoc(_ uid: String) -> DocumentReference {
@@ -108,6 +131,24 @@ final class FirestoreService: FirestoreServiceProtocol {
     func userExists(_ uid: String) async throws -> Bool {
         let snapshot = try await userDoc(uid).getDocument()
         return snapshot.exists
+    }
+
+    /// Exact-match username lookup, backing the "New Message" flow in
+    /// Phase 7 until Phase 9 adds real prefix search. Same query shape as
+    /// `isUsernameAvailable`, just returning the decoded user instead of
+    /// a bool.
+    func findUser(byUsername username: String) async throws -> AppUser? {
+        let lowered = username.lowercased()
+        do {
+            let snapshot = try await db.collection(Collection.users)
+                .whereField("usernameLowercase", isEqualTo: lowered)
+                .limit(to: 1)
+                .getDocuments()
+            guard let doc = snapshot.documents.first else { return nil }
+            return try? doc.data(as: AppUser.self)
+        } catch {
+            throw AppError.firestoreError(error.localizedDescription)
+        }
     }
 
     // MARK: - Profile (Phase 3)
@@ -326,7 +367,7 @@ final class FirestoreService: FirestoreServiceProtocol {
     /// transaction so two rapid taps (or a retry) can't double-count.
     /// Returns the resulting liked state; the caller already knows the
     /// old count locally and can adjust it by ±1 without an extra read.
-    func toggleLike(postId: String, userId: String) async throws -> Bool {
+    func toggleLike(postId: String, userId: String, postAuthorId: String) async throws -> Bool {
         let likeRef = postDoc(postId).collection(Collection.likes).document(userId)
         let reverseRef = userDoc(userId).collection(Collection.likedPosts).document(postId)
         let postRef = postDoc(postId)
@@ -353,7 +394,12 @@ final class FirestoreService: FirestoreServiceProtocol {
                     return true
                 }
             }
-            return (result as? Bool) ?? false
+            let liked = (result as? Bool) ?? false
+            // Notify on a *new* like only — unliking shouldn't ping anyone.
+            if liked {
+                await writeNotification(for: postAuthorId, type: .like, actorId: userId, postId: postId, commentPreview: nil)
+            }
+            return liked
         } catch {
             throw AppError.firestoreError(error.localizedDescription)
         }
@@ -382,6 +428,7 @@ final class FirestoreService: FirestoreServiceProtocol {
 
     func addComment(
         postId: String,
+        postAuthorId: String,
         authorId: String,
         authorUsername: String,
         authorAvatarURL: String?,
@@ -403,6 +450,13 @@ final class FirestoreService: FirestoreServiceProtocol {
         do {
             try await ref.setData(from: comment)
             try await postDoc(postId).updateData(["commentCount": FieldValue.increment(Int64(1))])
+            await writeNotification(
+                for: postAuthorId,
+                type: .comment,
+                actorId: authorId,
+                postId: postId,
+                commentPreview: String(trimmed.prefix(80))
+            )
         } catch {
             throw AppError.firestoreError(error.localizedDescription)
         }
@@ -459,6 +513,7 @@ final class FirestoreService: FirestoreServiceProtocol {
             batch.updateData(["followingCount": FieldValue.increment(Int64(1))], forDocument: userDoc(currentUserId))
             batch.updateData(["followerCount": FieldValue.increment(Int64(1))], forDocument: userDoc(targetUserId))
             try await batch.commit()
+            await writeNotification(for: targetUserId, type: .follow, actorId: currentUserId, postId: nil, commentPreview: nil)
         } catch {
             throw AppError.firestoreError(error.localizedDescription)
         }
@@ -500,6 +555,263 @@ final class FirestoreService: FirestoreServiceProtocol {
             return snapshot.documents.map { $0.documentID }
         } catch {
             throw AppError.firestoreError(error.localizedDescription)
+        }
+    }
+
+    // MARK: - Chat (Phase 7)
+
+    private func chatDoc(_ chatId: String) -> DocumentReference {
+        db.collection(Collection.chats).document(chatId)
+    }
+
+    /// Deterministic doc ID for a 1:1 thread — sorting the two uids means
+    /// either participant starting a conversation lands on the same chat
+    /// doc, so there's never a duplicate thread between the same two
+    /// people. This is what lets `createOrGetChat` be idempotent without
+    /// a lookup query.
+    func chatId(for userId: String, and otherUserId: String) -> String {
+        [userId, otherUserId].sorted().joined(separator: "_")
+    }
+
+    /// Fetches the existing thread between two users, or creates it. Safe
+    /// to call from either side (the profile "Message" button or the
+    /// "New Message" username search) since the doc ID is deterministic.
+    func createOrGetChat(
+        currentUserId: String,
+        currentUsername: String,
+        currentAvatarURL: String?,
+        otherUserId: String,
+        otherUsername: String,
+        otherAvatarURL: String?
+    ) async throws -> Chat {
+        guard currentUserId != otherUserId else {
+            throw AppError.invalidInput("You can't message yourself.")
+        }
+        let id = chatId(for: currentUserId, and: otherUserId)
+        let ref = chatDoc(id)
+        do {
+            let snapshot = try await ref.getDocument()
+            if snapshot.exists, let existing = try? snapshot.data(as: Chat.self) {
+                return existing
+            }
+            let now = Date()
+            let chat = Chat(
+                id: id,
+                participantIds: [currentUserId, otherUserId],
+                participantUsernames: [currentUserId: currentUsername, otherUserId: otherUsername],
+                participantAvatarURLs: [currentUserId: currentAvatarURL, otherUserId: otherAvatarURL]
+                    .compactMapValues { $0 },
+                lastMessageText: nil,
+                lastMessageSenderId: nil,
+                lastMessageAt: now,
+                createdAt: now,
+                readAt: [currentUserId: now],
+                typingUserId: nil
+            )
+            try await ref.setData(from: chat, merge: false)
+            return chat
+        } catch let error as AppError {
+            throw error
+        } catch {
+            throw AppError.firestoreError(error.localizedDescription)
+        }
+    }
+
+    /// Writes the message doc and updates the chat's `lastMessage*`
+    /// preview fields in one batch, and clears any in-flight typing flag
+    /// for the sender — the message landing is the clearest possible
+    /// signal that they've stopped typing, cheaper than waiting for the
+    /// client-side debounce timer in ChatViewModel.
+    func sendMessage(chatId: String, senderId: String, text: String) async throws {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw AppError.invalidInput("Message can't be empty.")
+        }
+        let ref = chatDoc(chatId)
+        let messageRef = ref.collection(Collection.messages).document()
+        let message = ChatMessage(id: messageRef.documentID, senderId: senderId, text: trimmed, createdAt: Date())
+        do {
+            let batch = db.batch()
+            try batch.setData(from: message, forDocument: messageRef)
+            batch.updateData([
+                "lastMessageText": trimmed,
+                "lastMessageSenderId": senderId,
+                "lastMessageAt": FieldValue.serverTimestamp(),
+                "typingUserId": FieldValue.delete()
+            ], forDocument: ref)
+            try await batch.commit()
+        } catch {
+            throw AppError.firestoreError(error.localizedDescription)
+        }
+    }
+
+    /// Real-time message stream for a thread — same AsyncStream pattern
+    /// as `observeComments`.
+    func observeMessages(chatId: String) -> AsyncStream<[ChatMessage]> {
+        AsyncStream { continuation in
+            let listener = chatDoc(chatId).collection(Collection.messages)
+                .order(by: "createdAt", descending: false)
+                .addSnapshotListener { snapshot, _ in
+                    guard let snapshot else {
+                        continuation.yield([])
+                        return
+                    }
+                    let messages = snapshot.documents.compactMap { try? $0.data(as: ChatMessage.self) }
+                    continuation.yield(messages)
+                }
+            continuation.onTermination = { _ in
+                listener.remove()
+            }
+        }
+    }
+
+    /// Live thread list for ChatListView, most-recent activity first.
+    /// The `arrayContains` + `orderBy` combination needs a composite
+    /// index — see firestore.indexes.json.
+    func observeUserChats(userId: String) -> AsyncStream<[Chat]> {
+        AsyncStream { continuation in
+            let listener = db.collection(Collection.chats)
+                .whereField("participantIds", arrayContains: userId)
+                .order(by: "lastMessageAt", descending: true)
+                .addSnapshotListener { snapshot, _ in
+                    guard let snapshot else {
+                        continuation.yield([])
+                        return
+                    }
+                    let chats = snapshot.documents.compactMap { try? $0.data(as: Chat.self) }
+                    continuation.yield(chats)
+                }
+            continuation.onTermination = { _ in
+                listener.remove()
+            }
+        }
+    }
+
+    /// Single-doc listener for one open thread — used by ChatView to
+    /// drive the typing indicator without subscribing to the whole chat
+    /// list a second time.
+    func observeChat(chatId: String) -> AsyncStream<Chat?> {
+        AsyncStream { continuation in
+            let listener = chatDoc(chatId).addSnapshotListener { snapshot, _ in
+                guard let snapshot, snapshot.exists else {
+                    continuation.yield(nil)
+                    return
+                }
+                continuation.yield(try? snapshot.data(as: Chat.self))
+            }
+            continuation.onTermination = { _ in
+                listener.remove()
+            }
+        }
+    }
+
+    /// Stamps `readAt.{userId}` with the server time — called when a
+    /// thread is opened. Dot-path update touches only that one map
+    /// entry, so it's safe for the two participants to write concurrently
+    /// without clobbering each other's read marker.
+    func markChatRead(chatId: String, userId: String) async throws {
+        do {
+            try await chatDoc(chatId).updateData(["readAt.\(userId)": FieldValue.serverTimestamp()])
+        } catch {
+            throw AppError.firestoreError(error.localizedDescription)
+        }
+    }
+
+    /// Sets or clears the shared `typingUserId` field — the cheapest
+    /// possible typing indicator on the Spark plan (a single field write,
+    /// no Cloud Function). `ChatViewModel` calls this on every keystroke
+    /// (debounced) and once more when a message actually sends.
+    func setTyping(chatId: String, userId: String, isTyping: Bool) async throws {
+        let value: Any = isTyping ? userId : FieldValue.delete()
+        do {
+            try await chatDoc(chatId).updateData(["typingUserId": value])
+        } catch {
+            throw AppError.firestoreError(error.localizedDescription)
+        }
+    }
+
+    // MARK: - Notifications (Phase 8)
+
+    /// Real-time activity feed for the Activity tab — newest first,
+    /// capped at 50 so the listener stays cheap against the free-tier
+    /// read quota even for a very active account.
+    func observeNotifications(userId: String) -> AsyncStream<[AppNotification]> {
+        AsyncStream { continuation in
+            let listener = userDoc(userId).collection(Collection.notifications)
+                .order(by: "createdAt", descending: true)
+                .limit(to: 50)
+                .addSnapshotListener { snapshot, _ in
+                    guard let snapshot else {
+                        continuation.yield([])
+                        return
+                    }
+                    let items = snapshot.documents.compactMap { try? $0.data(as: AppNotification.self) }
+                    continuation.yield(items)
+                }
+            continuation.onTermination = { _ in
+                listener.remove()
+            }
+        }
+    }
+
+    func markNotificationRead(userId: String, notificationId: String) async throws {
+        do {
+            try await userDoc(userId).collection(Collection.notifications).document(notificationId)
+                .updateData(["isRead": true])
+        } catch {
+            throw AppError.firestoreError(error.localizedDescription)
+        }
+    }
+
+    /// Batched "mark all as read", called from the Activity tab's toolbar
+    /// button — one write per unread notification, batched into a single
+    /// commit rather than N sequential round trips.
+    func markAllNotificationsRead(userId: String, among notificationIds: [String]) async throws {
+        guard !notificationIds.isEmpty else { return }
+        do {
+            let batch = db.batch()
+            for id in notificationIds {
+                batch.updateData(
+                    ["isRead": true],
+                    forDocument: userDoc(userId).collection(Collection.notifications).document(id)
+                )
+            }
+            try await batch.commit()
+        } catch {
+            throw AppError.firestoreError(error.localizedDescription)
+        }
+    }
+
+    /// Best-effort notification write, called from `toggleLike`,
+    /// `addComment`, and `follow` above. Swallows its own errors rather
+    /// than throwing: a missed notification is far less costly than
+    /// rolling back a like/comment/follow the user already sees reflected
+    /// in the UI. Skips self-notifications (e.g. liking your own post).
+    private func writeNotification(
+        for targetUserId: String,
+        type: NotificationType,
+        actorId: String,
+        postId: String?,
+        commentPreview: String?
+    ) async {
+        guard targetUserId != actorId else { return }
+        let ref = userDoc(targetUserId).collection(Collection.notifications).document()
+        do {
+            let actor = try await fetchUser(actorId)
+            let notification = AppNotification(
+                id: ref.documentID,
+                type: type,
+                actorId: actorId,
+                actorUsername: actor.username,
+                actorAvatarURL: actor.avatarURL,
+                postId: postId,
+                commentPreview: commentPreview,
+                createdAt: Date(),
+                isRead: false
+            )
+            try await ref.setData(from: notification)
+        } catch {
+            // Best-effort — see doc comment above.
         }
     }
 }
