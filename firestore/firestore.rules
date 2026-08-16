@@ -98,6 +98,26 @@ service cloud.firestore {
         allow read, create, delete: if request.auth != null && request.auth.uid == userId;
         allow update: if false;
       }
+
+      // -----------------------------------------------------------
+      // users/{userId}/notifications/{notificationId}  (Phase 8)
+      // Written by whoever performed the like/comment/follow — see
+      // FirestoreService.writeNotification — so create checks the
+      // actor (request.resource.data.actorId), not the doc owner.
+      // Only the recipient can read their own feed or flip isRead.
+      // -----------------------------------------------------------
+      match /notifications/{notificationId} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+        allow create: if request.auth != null
+          && request.auth.uid == request.resource.data.actorId
+          && request.auth.uid != userId
+          && request.resource.data.keys().hasAll(['type', 'actorId', 'actorUsername', 'createdAt', 'isRead'])
+          && request.resource.data.isRead == false;
+        allow update: if request.auth != null
+          && request.auth.uid == userId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
+        allow delete: if false;
+      }
     }
 
     // =================================================================
@@ -176,10 +196,53 @@ service cloud.firestore {
     }
 
     // =================================================================
-    // chats/{chatId}/messages/{messageId} — Phase 7, not built yet.
-    // Everything else not matched above (chats included) stays locked
-    // until the feature that needs it actually lands.
+    // chats/{chatId}  (Phase 7)
+    // Doc ID is deterministic — sorted(uidA, uidB) joined with "_" — so
+    // membership can always be checked against participantIds without a
+    // lookup. Everything under a thread is restricted to its two
+    // participants.
     // =================================================================
+    match /chats/{chatId} {
+      allow read: if request.auth != null && request.auth.uid in resource.data.participantIds;
+
+      allow create: if request.auth != null
+        && request.auth.uid in request.resource.data.participantIds
+        && request.resource.data.participantIds.size() == 2
+        && request.resource.data.keys().hasAll([
+             'participantIds', 'participantUsernames', 'participantAvatarURLs',
+             'lastMessageAt', 'createdAt', 'readAt'
+           ]);
+
+      // Every post-creation write goes through one of three
+      // FirestoreService methods, each touching only its own fields:
+      // sendMessage (lastMessage* + clearing typingUserId),
+      // markChatRead (readAt.<uid>), or setTyping (typingUserId).
+      allow update: if request.auth != null
+        && request.auth.uid in resource.data.participantIds
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['lastMessageText', 'lastMessageSenderId', 'lastMessageAt', 'readAt', 'typingUserId']);
+
+      allow delete: if false;
+
+      // -----------------------------------------------------------
+      // chats/{chatId}/messages/{messageId}  (Phase 7)
+      // -----------------------------------------------------------
+      match /messages/{messageId} {
+        allow read: if request.auth != null
+          && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participantIds;
+        allow create: if request.auth != null
+          && request.auth.uid == request.resource.data.senderId
+          && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participantIds
+          && request.resource.data.keys().hasAll(['senderId', 'text', 'createdAt'])
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 2000;
+        allow update, delete: if false;
+      }
+    }
+
+    // Everything else not matched above stays locked until the feature
+    // that needs it actually lands.
     match /{document=**} {
       allow read, write: if false;
     }
