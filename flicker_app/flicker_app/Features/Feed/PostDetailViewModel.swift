@@ -75,7 +75,7 @@ final class PostDetailViewModel {
         self.post = post
 
         do {
-            let liked = try await firestoreService.toggleLike(postId: postId, userId: uid)
+            let liked = try await firestoreService.toggleLike(postId: postId, userId: uid, postAuthorId: post.authorId)
             if liked != isLiked {
                 isLiked = liked
                 await load()
@@ -89,13 +89,14 @@ final class PostDetailViewModel {
 
     func postComment() async {
         let text = newCommentText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let uid = authService.currentUserId else { return }
+        guard !text.isEmpty, let uid = authService.currentUserId, let postAuthorId = post?.authorId else { return }
         isPostingComment = true
         defer { isPostingComment = false }
         do {
             let author = try await firestoreService.fetchUser(uid)
             try await firestoreService.addComment(
                 postId: postId,
+                postAuthorId: postAuthorId,
                 authorId: uid,
                 authorUsername: author.username,
                 authorAvatarURL: author.avatarURL,

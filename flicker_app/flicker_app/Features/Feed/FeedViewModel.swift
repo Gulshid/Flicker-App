@@ -108,7 +108,7 @@ final class FeedViewModel {
         applyLikeState(liked: !wasLiked, postId: postId, index: index)
 
         do {
-            let liked = try await firestoreService.toggleLike(postId: postId, userId: uid)
+            let liked = try await firestoreService.toggleLike(postId: postId, userId: uid, postAuthorId: post.authorId)
             if liked != !wasLiked {
                 applyLikeState(liked: liked, postId: postId, index: index)
             }
