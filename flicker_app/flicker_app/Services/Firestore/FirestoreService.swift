@@ -28,8 +28,12 @@ protocol FirestoreServiceProtocol {
     func fetchUser(_ uid: String) async throws -> AppUser
     func updateUserProfile(uid: String, bio: String?, avatarURL: String?) async throws
 
-    // Posts (Phase 5)
-    func createPost(authorId: String, authorUsername: String, authorAvatarURL: String?, mediaURLs: [String], caption: String?) async throws -> Post
+    // Posts (Phase 5). `hasVideo` is only ever true from Phase 10's
+    // CreateReelViewModel — see Post.hasVideo. Not defaulted here since
+    // default argument values on a protocol *requirement* aren't always
+    // visible through an existential-typed call site; every caller
+    // passes it explicitly instead.
+    func createPost(authorId: String, authorUsername: String, authorAvatarURL: String?, mediaURLs: [String], caption: String?, hasVideo: Bool) async throws -> Post
     func fetchFeed(type: FeedType, cursor: FeedCursor?, pageSize: Int) async throws -> (posts: [Post], nextCursor: FeedCursor?)
     func fetchUserPosts(authorId: String, cursor: FeedCursor?, pageSize: Int) async throws -> (posts: [Post], nextCursor: FeedCursor?)
     func fetchPost(_ postId: String) async throws -> Post
@@ -67,6 +71,18 @@ protocol FirestoreServiceProtocol {
     func observeNotifications(userId: String) -> AsyncStream<[AppNotification]>
     func markNotificationRead(userId: String, notificationId: String) async throws
     func markAllNotificationsRead(userId: String, among notificationIds: [String]) async throws
+
+    // Search & Discovery (Phase 9)
+    func searchUsers(prefix: String, limit: Int) async throws -> [AppUser]
+    func fetchTrendingPosts(cursor: FeedCursor?, pageSize: Int) async throws -> (posts: [Post], nextCursor: FeedCursor?)
+
+    // Stories (Phase 10)
+    func createStory(authorId: String, authorUsername: String, authorAvatarURL: String?, mediaURL: String, isVideo: Bool) async throws -> Story
+    func observeActiveStories() -> AsyncStream<[Story]>
+    func deleteStory(storyId: String, authorId: String) async throws
+
+    // Reels (Phase 10)
+    func fetchVideoPosts(cursor: FeedCursor?, pageSize: Int) async throws -> (posts: [Post], nextCursor: FeedCursor?)
 }
 
 /// Thin wrapper around Firestore. Collection layout mirrors the schema in
@@ -104,6 +120,9 @@ final class FirestoreService: FirestoreServiceProtocol {
         // the actor's own client (see writeNotification), read by the
         // recipient via observeNotifications.
         static let notifications = "notifications"
+        // stories/{storyId} — Phase 10. Top-level, not a subcollection —
+        // see the doc comment on the Story model for why.
+        static let stories = "stories"
     }
 
     private func userDoc(_ uid: String) -> DocumentReference {
@@ -146,6 +165,30 @@ final class FirestoreService: FirestoreServiceProtocol {
                 .getDocuments()
             guard let doc = snapshot.documents.first else { return nil }
             return try? doc.data(as: AppUser.self)
+        } catch {
+            throw AppError.firestoreError(error.localizedDescription)
+        }
+    }
+
+    /// Prefix search over `usernameLowercase`, the real thing the
+    /// roadmap's Phase 9 note points at: "range query on a lowercase
+    /// username field". Firestore has no native `LIKE`/`startsWith`, so
+    /// this is the standard trick — `\u{f8ff}` sorts after every normal
+    /// Unicode character, so `[prefix, prefix + \u{f8ff})` matches every
+    /// string that starts with `prefix`. Good enough at this scale;
+    /// Algolia/Typesense is the noted upgrade once search needs fuzzy
+    /// matching or ranking.
+    func searchUsers(prefix: String, limit: Int = 20) async throws -> [AppUser] {
+        let lowered = prefix.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !lowered.isEmpty else { return [] }
+        do {
+            let snapshot = try await db.collection(Collection.users)
+                .whereField("usernameLowercase", isGreaterThanOrEqualTo: lowered)
+                .whereField("usernameLowercase", isLessThan: lowered + "\u{f8ff}")
+                .order(by: "usernameLowercase")
+                .limit(to: limit)
+                .getDocuments()
+            return snapshot.documents.compactMap { try? $0.data(as: AppUser.self) }
         } catch {
             throw AppError.firestoreError(error.localizedDescription)
         }
@@ -219,7 +262,8 @@ final class FirestoreService: FirestoreServiceProtocol {
         authorUsername: String,
         authorAvatarURL: String?,
         mediaURLs: [String],
-        caption: String?
+        caption: String?,
+        hasVideo: Bool
     ) async throws -> Post {
         guard !mediaURLs.isEmpty else {
             throw AppError.invalidInput("A post needs at least one photo or video.")
@@ -234,7 +278,8 @@ final class FirestoreService: FirestoreServiceProtocol {
             caption: caption,
             likeCount: 0,
             commentCount: 0,
-            createdAt: Date()
+            createdAt: Date(),
+            hasVideo: hasVideo ? true : nil
         )
         do {
             let batch = db.batch()
@@ -285,6 +330,35 @@ final class FirestoreService: FirestoreServiceProtocol {
     ) async throws -> (posts: [Post], nextCursor: FeedCursor?) {
         let query = db.collection(Collection.posts)
             .whereField("authorId", isEqualTo: authorId)
+            .order(by: "createdAt", descending: true)
+        return try await runPagedPostQuery(query, cursor: cursor, pageSize: pageSize)
+    }
+
+    /// Backs the Explore grid (Phase 9) — most-liked posts first, no
+    /// author filter. A single `orderBy` with no `where` clause needs no
+    /// composite index, unlike `.following`'s feed query above. This is a
+    /// simple popularity ranking rather than a real trending algorithm
+    /// (no time decay), which is the right tradeoff for a free-tier
+    /// project: a decayed score would need to be recomputed periodically
+    /// by something server-side, which the Spark plan doesn't have.
+    func fetchTrendingPosts(
+        cursor: FeedCursor?,
+        pageSize: Int = 21
+    ) async throws -> (posts: [Post], nextCursor: FeedCursor?) {
+        let query = db.collection(Collection.posts).order(by: "likeCount", descending: true)
+        return try await runPagedPostQuery(query, cursor: cursor, pageSize: pageSize)
+    }
+
+    /// Backs the Reels tab (Phase 10) — video-only posts, newest first.
+    /// The equality filter on `hasVideo` combined with `orderBy(createdAt)`
+    /// needs a composite index, same situation as the `.following` feed
+    /// query above — see firestore.indexes.json.
+    func fetchVideoPosts(
+        cursor: FeedCursor?,
+        pageSize: Int = 5
+    ) async throws -> (posts: [Post], nextCursor: FeedCursor?) {
+        let query = db.collection(Collection.posts)
+            .whereField("hasVideo", isEqualTo: true)
             .order(by: "createdAt", descending: true)
         return try await runPagedPostQuery(query, cursor: cursor, pageSize: pageSize)
     }
@@ -812,6 +886,78 @@ final class FirestoreService: FirestoreServiceProtocol {
             try await ref.setData(from: notification)
         } catch {
             // Best-effort — see doc comment above.
+        }
+    }
+
+    // MARK: - Stories (Phase 10)
+
+    /// Writes a story doc with a 24-hour expiry. No Cloud Function
+    /// schedules its removal — see `observeActiveStories` for how expiry
+    /// is enforced entirely client-side, exactly the compensation the
+    /// roadmap calls for on the Spark plan.
+    func createStory(
+        authorId: String,
+        authorUsername: String,
+        authorAvatarURL: String?,
+        mediaURL: String,
+        isVideo: Bool
+    ) async throws -> Story {
+        let ref = db.collection(Collection.stories).document()
+        let now = Date()
+        let story = Story(
+            id: ref.documentID,
+            authorId: authorId,
+            authorUsername: authorUsername,
+            authorAvatarURL: authorAvatarURL,
+            mediaURL: mediaURL,
+            isVideo: isVideo,
+            createdAt: now,
+            expiresAt: now.addingTimeInterval(24 * 60 * 60)
+        )
+        do {
+            try await ref.setData(from: story)
+            return story
+        } catch {
+            throw AppError.firestoreError(error.localizedDescription)
+        }
+    }
+
+    /// Live stream of every still-active story from every author, for
+    /// the story tray at the top of the Home tab. Filtering AND ordering
+    /// both happen on `expiresAt`, so this only needs a single-field
+    /// index (Firestore creates those automatically) — no entry in
+    /// firestore.indexes.json required, unlike the composite-index
+    /// queries elsewhere in this file. `StoriesViewModel` groups the flat
+    /// result by author client-side.
+    ///
+    /// Note: a story doc isn't deleted the moment it expires — it just
+    /// stops matching this query. Same tradeoff as `deletePost`'s orphaned
+    /// subcollections: cheap to leave around, a good fit for a scheduled
+    /// Cloud Function once the project moves off Spark.
+    func observeActiveStories() -> AsyncStream<[Story]> {
+        AsyncStream { continuation in
+            let listener = db.collection(Collection.stories)
+                .whereField("expiresAt", isGreaterThan: Date())
+                .order(by: "expiresAt")
+                .addSnapshotListener { snapshot, _ in
+                    guard let snapshot else {
+                        continuation.yield([])
+                        return
+                    }
+                    let stories = snapshot.documents.compactMap { try? $0.data(as: Story.self) }
+                    continuation.yield(stories)
+                }
+            continuation.onTermination = { _ in
+                listener.remove()
+            }
+        }
+    }
+
+    func deleteStory(storyId: String, authorId: String) async throws {
+        do {
+            try await db.collection(Collection.stories).document(storyId).delete()
+        } catch {
+            throw AppError.firestoreError(error.localizedDescription)
         }
     }
 }
