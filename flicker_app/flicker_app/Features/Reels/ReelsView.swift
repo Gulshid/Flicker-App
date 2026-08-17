@@ -14,51 +14,65 @@ struct ReelsView: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                if viewModel.posts.isEmpty && viewModel.isLoading {
-                    ProgressView()
-                        .tint(.white)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Color.black)
-                } else if viewModel.posts.isEmpty {
-                    emptyState
-                } else {
-                    pager
+            mainContent
+                .toolbar { toolbarContent }
+                .toolbarBackground(.hidden, for: .navigationBar)
+                .sheet(isPresented: $showCreateReel) { createReelSheet }
+                .sheet(item: authorBinding) { wrapped in
+                    UserProfileView(userId: wrapped.value)
                 }
-            }
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showCreateReel = true
-                    } label: {
-                        Image(systemName: "video.badge.plus")
-                            .foregroundStyle(.white)
-                    }
+                .sheet(item: $detailPostId) { wrapped in
+                    PostDetailView(postId: wrapped.value)
                 }
-            }
-            .toolbarBackground(.hidden, for: .navigationBar)
-            .sheet(isPresented: $showCreateReel) {
-                CreateReelView { newPost in
-                    viewModel.posts.insert(newPost, at: 0)
-                }
-            }
-            .sheet(item: Binding(
-                get: { authorToView.map { IdentifiableString(value: $0) } },
-                set: { authorToView = $0?.value }
-            )) { wrapped in
-                UserProfileView(userId: wrapped.value)
-            }
-            .sheet(item: $detailPostId) { wrapped in
-                PostDetailView(postId: wrapped.value)
-            }
-            .task {
-                await viewModel.loadInitialIfNeeded()
-                if selectedPostId == nil {
-                    selectedPostId = viewModel.posts.first?.id
-                }
-            }
+                .task { await loadInitialIfNeeded() }
         }
         .background(Color.black)
+    }
+
+    @ViewBuilder
+    private var mainContent: some View {
+        if viewModel.posts.isEmpty && viewModel.isLoading {
+            ProgressView()
+                .tint(.white)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.black)
+        } else if viewModel.posts.isEmpty {
+            emptyState
+        } else {
+            pager
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            Button {
+                showCreateReel = true
+            } label: {
+                Image(systemName: "video.badge.plus")
+                    .foregroundStyle(.white)
+            }
+        }
+    }
+
+    private var createReelSheet: some View {
+        CreateReelView { newPost in
+            viewModel.prepend(newPost)
+        }
+    }
+
+    private var authorBinding: Binding<IdentifiableString?> {
+        Binding<IdentifiableString?>(
+            get: { authorToView.map { IdentifiableString(value: $0) } },
+            set: { authorToView = $0?.value }
+        )
+    }
+
+    private func loadInitialIfNeeded() async {
+        await viewModel.loadInitialIfNeeded()
+        if selectedPostId == nil {
+            selectedPostId = viewModel.posts.first?.id
+        }
     }
 
     private var pager: some View {

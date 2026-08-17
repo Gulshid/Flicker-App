@@ -27,6 +27,12 @@ final class ReelsViewModel {
         self.authService = authService
     }
 
+    /// Called after a new reel is created, so it appears at the top of
+    /// the feed immediately without a full reload.
+    func prepend(_ post: Post) {
+        posts.insert(post, at: 0)
+    }
+
     func loadInitialIfNeeded() async {
         guard !hasLoadedOnce else { return }
         await loadMore()

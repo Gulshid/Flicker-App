@@ -1,5 +1,6 @@
 import Foundation
 import PhotosUI
+import SwiftUI
 import Observation
 
 /// Backs CreateStoryView: one photo or video, picked, uploaded, and

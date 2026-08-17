@@ -1,5 +1,6 @@
 import Foundation
 import PhotosUI
+import SwiftUI
 import Observation
 
 /// Backs CreateReelView: exactly one video, uploaded via
@@ -9,7 +10,8 @@ import Observation
 /// filters down to. This deliberately does not reuse
 /// `CreatePostViewModel`: that one is a multi-item *image* pipeline
 /// (compression, thumbnailing assumptions baked in), and forcing video
-/// through it would be more invasive than a small dedicated flow.@MainActor
+/// through it would be more invasive than a small dedicated flow.
+@MainActor
 @Observable
 final class CreateReelViewModel {
     enum UploadState: Equatable {
