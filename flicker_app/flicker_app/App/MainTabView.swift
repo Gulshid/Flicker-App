@@ -5,7 +5,10 @@ import SwiftUI
 // out the tab bar. NotificationsViewModel is created once here (rather
 // than inside NotificationsView) so its listener — and the unread count
 // that drives the tab badge — stay alive even while the Activity tab
-// itself isn't the one on screen.
+// itself isn't the one on screen. Search (Phase 9) and Reels (Phase 10)
+// are the last two additions — six tabs total now means iOS's stock
+// "More" overflow can kick in on narrower devices, which is expected,
+// standard UITabBarController behavior rather than a bug here.
 struct MainTabView: View {
     @Environment(SessionStore.self) private var session
     @State private var notificationsViewModel = NotificationsViewModel()
@@ -14,6 +17,12 @@ struct MainTabView: View {
         TabView {
             FeedView()
                 .tabItem { Label("Home", systemImage: "house.fill") }
+
+            SearchView()
+                .tabItem { Label("Search", systemImage: "magnifyingglass") }
+
+            ReelsView()
+                .tabItem { Label("Reels", systemImage: "play.rectangle.fill") }
 
             ChatListView()
                 .tabItem { Label("Chats", systemImage: "bubble.left.and.bubble.right.fill") }
