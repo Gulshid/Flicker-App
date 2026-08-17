@@ -6,13 +6,9 @@ import SwiftUI
 /// here (compose button → username search) or from a profile's Message
 /// button (see UserProfileView).
 struct ChatListView: View {
-    @State private var viewModel: ChatListViewModel
+    @State private var viewModel = ChatListViewModel()
     @State private var openChat: Chat?
     @State private var showNewMessage = false
-
-    init(viewModel: ChatListViewModel = ChatListViewModel()) {
-        _viewModel = State(initialValue: viewModel)
-    }
 
     var body: some View {
         NavigationStack {

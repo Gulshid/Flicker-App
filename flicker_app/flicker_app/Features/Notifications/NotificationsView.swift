@@ -8,7 +8,13 @@ struct NotificationsView: View {
     @State var viewModel: NotificationsViewModel
     @State private var authorToView: String?
 
-    init(viewModel: NotificationsViewModel = NotificationsViewModel()) {
+    // No default value here on purpose — a default argument expression
+    // that calls `NotificationsViewModel()` (a @MainActor initializer)
+    // is evaluated in this init's own nonisolated context and fails to
+    // build under Swift 6 strict concurrency. The one call site
+    // (MainTabView) always passes its shared instance explicitly anyway,
+    // so a required parameter costs nothing.
+    init(viewModel: NotificationsViewModel) {
         _viewModel = State(initialValue: viewModel)
     }
 
