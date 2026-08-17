@@ -241,6 +241,27 @@ service cloud.firestore {
       }
     }
 
+    // =================================================================
+    // stories/{storyId}  (Phase 10)
+    // Top-level collection, not nested under users/{uid} — see the doc
+    // comment on the Story model for why. Anyone signed in can read (the
+    // tray shows everyone's active stories); only the author can create
+    // or delete their own.
+    // =================================================================
+    match /stories/{storyId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.authorId
+        && request.resource.data.keys().hasAll([
+             'authorId', 'authorUsername', 'mediaURL', 'isVideo', 'createdAt', 'expiresAt'
+           ]);
+      // Nothing ever edits a story in place — expiry is enforced by
+      // observeActiveStories' query no longer matching it, not by a
+      // client write — so update is fully closed.
+      allow update: if false;
+      allow delete: if request.auth != null && request.auth.uid == resource.data.authorId;
+    }
+
     // Everything else not matched above stays locked until the feature
     // that needs it actually lands.
     match /{document=**} {
