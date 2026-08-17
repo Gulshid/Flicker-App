@@ -17,8 +17,17 @@ struct Post: Codable, Identifiable, Equatable {
     var commentCount: Int
     var createdAt: Date
 
+    /// Optional so every post written before Phase 10 decodes fine with
+    /// no migration — missing key just means "not a reel". Set on
+    /// creation by `CreateReelViewModel` (never toggled after the fact),
+    /// and used both to filter the Reels feed query and to pick the
+    /// video vs. photo renderer in PostCardView/PostDetailView.
+    var hasVideo: Bool?
+
     /// Feed/detail views only ever see documents that came back from
     /// Firestore (so `id` is always populated); this keeps call sites
     /// from having to unwrap an optional that's never actually nil.
     var postId: String { id ?? "" }
+
+    var isVideo: Bool { hasVideo ?? false }
 }
