@@ -11,14 +11,19 @@ struct FeedView: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                if viewModel.posts.isEmpty && viewModel.isLoading {
-                    ProgressView()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if viewModel.posts.isEmpty && !viewModel.isLoading {
-                    emptyState
-                } else {
-                    list
+            VStack(spacing: 0) {
+                StoryTrayView()
+                Divider()
+
+                Group {
+                    if viewModel.posts.isEmpty && viewModel.isLoading {
+                        ProgressView()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if viewModel.posts.isEmpty && !viewModel.isLoading {
+                        emptyState
+                    } else {
+                        list
+                    }
                 }
             }
             .navigationTitle("Home")

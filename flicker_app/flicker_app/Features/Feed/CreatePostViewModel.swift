@@ -131,7 +131,8 @@ final class CreatePostViewModel {
                 authorUsername: author.username,
                 authorAvatarURL: author.avatarURL,
                 mediaURLs: urls,
-                caption: trimmedCaption.isEmpty ? nil : trimmedCaption
+                caption: trimmedCaption.isEmpty ? nil : trimmedCaption,
+                hasVideo: false
             )
         } catch {
             errorMessage = error.localizedDescription
