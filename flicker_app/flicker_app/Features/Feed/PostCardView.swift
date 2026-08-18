@@ -14,7 +14,6 @@ struct PostCardView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             media
-                .onTapGesture(count: 2) { onToggleLike() }
             actions
             captionAndMeta
         }
@@ -63,9 +62,19 @@ struct PostCardView: View {
             .overlay(Image(systemName: "person.fill").font(.caption).foregroundStyle(.secondary))
     }
 
+    // Single tap opens the post, double tap likes it. This used to be a
+    // `Button(action: onOpenDetail)` with a separate `.onTapGesture(count: 2)`
+    // layered on top — but a Button's internal gesture recognizer and a
+    // bolted-on `onTapGesture` are two different gesture systems that
+    // don't coordinate with each other. Inside a scrolling LazyVStack that
+    // mismatch is exactly what was letting taps get misrouted to other
+    // rows' buttons (e.g. the header's author Button firing this view's
+    // detail action instead). Putting both tap counts on the same plain
+    // view, with one explicit `.contentShape`, is the pattern SwiftUI
+    // actually supports for single/double tap disambiguation.
     @ViewBuilder
     private var media: some View {
-        Button(action: onOpenDetail) {
+        Group {
             if post.mediaURLs.count == 1 {
                 mediaImage(post.mediaURLs[0])
             } else {
@@ -78,7 +87,9 @@ struct PostCardView: View {
                 .frame(height: 360)
             }
         }
-        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { onToggleLike() }
+        .onTapGesture(count: 1) { onOpenDetail() }
     }
 
     private func mediaImage(_ urlString: String) -> some View {
