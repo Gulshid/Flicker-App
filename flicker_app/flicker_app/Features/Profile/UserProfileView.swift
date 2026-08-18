@@ -18,14 +18,20 @@ struct UserProfileView: View {
             Group {
                 if let user = viewModel.user {
                     content(for: user)
-                } else if viewModel.isLoading {
-                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let errorMessage = viewModel.errorMessage {
                     ContentUnavailableView(
                         "Couldn't load profile",
                         systemImage: "exclamationmark.triangle",
                         description: Text(errorMessage)
                     )
+                } else {
+                    // Covers isLoading == false / user == nil / errorMessage == nil,
+                    // which is true for at least the first render pass before
+                    // .task below gets a chance to flip isLoading to true.
+                    // Without this branch none of the above conditions match
+                    // and the sheet renders completely blank — see ProfileView
+                    // for the same fix on the signed-in user's own profile.
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             .navigationTitle("Profile")
