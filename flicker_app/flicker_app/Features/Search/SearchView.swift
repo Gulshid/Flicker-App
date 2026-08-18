@@ -5,9 +5,25 @@ import SwiftUI
 /// empty it falls back to an Explore grid of the most-liked posts
 /// app-wide, same visual shape as `PostGridView`.
 struct SearchView: View {
+    /// Single source of truth for this screen's sheet, instead of two
+    /// separate optionals each with their own `.sheet` modifier — see
+    /// FeedView's FeedSheet for why: multiple `.sheet` modifiers in the
+    /// same NavigationStack can get their presentation contexts crossed,
+    /// so tapping a user could end up opening the post-detail sheet.
+    private enum SearchSheet: Identifiable {
+        case author(String)
+        case postDetail(String)
+
+        var id: String {
+            switch self {
+            case .author(let id): return "author-\(id)"
+            case .postDetail(let id): return "postDetail-\(id)"
+            }
+        }
+    }
+
     @State private var viewModel = SearchViewModel()
-    @State private var authorToView: String?
-    @State private var detailPostId: IdentifiableString?
+    @State private var activeSheet: SearchSheet?
 
     private let columns = [
         GridItem(.flexible(), spacing: 2),
@@ -26,14 +42,13 @@ struct SearchView: View {
             }
             .navigationTitle("Search")
             .searchable(text: $viewModel.queryText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search people")
-            .sheet(item: Binding(
-                get: { authorToView.map { IdentifiableString(value: $0) } },
-                set: { authorToView = $0?.value }
-            )) { wrapped in
-                UserProfileView(userId: wrapped.value)
-            }
-            .sheet(item: $detailPostId) { wrapped in
-                PostDetailView(postId: wrapped.value)
+            .sheet(item: $activeSheet) { sheet in
+                switch sheet {
+                case .author(let userId):
+                    UserProfileView(userId: userId)
+                case .postDetail(let postId):
+                    PostDetailView(postId: postId)
+                }
             }
             .task { await viewModel.loadExploreIfNeeded() }
         }
@@ -48,7 +63,7 @@ struct SearchView: View {
         } else {
             List(viewModel.userResults) { user in
                 Button {
-                    authorToView = user.id
+                    activeSheet = .author(user.id)
                 } label: {
                     UserSearchRowView(user: user)
                 }
@@ -66,7 +81,7 @@ struct SearchView: View {
                 LazyVGrid(columns: columns, spacing: 2) {
                     ForEach(viewModel.explorePosts) { post in
                         Button {
-                            detailPostId = IdentifiableString(value: post.postId)
+                            activeSheet = .postDetail(post.postId)
                         } label: {
                             exploreThumbnail(for: post)
                         }

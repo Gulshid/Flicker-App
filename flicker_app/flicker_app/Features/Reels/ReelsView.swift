@@ -6,23 +6,44 @@ import SwiftUI
 /// `@Observable` elsewhere, so this needs no extra minimum-version bump
 /// and no `UIPageViewController` bridging.
 struct ReelsView: View {
+    /// Single source of truth for this screen's sheet, instead of two
+    /// separate optionals each with their own `.sheet` modifier — see
+    /// FeedView's FeedSheet for why: multiple `.sheet` modifiers in the
+    /// same NavigationStack can get their presentation contexts crossed,
+    /// so tapping a reel's author could end up opening the comments
+    /// sheet instead of the profile sheet.
+    private enum ReelsSheet: Identifiable {
+        case createReel
+        case author(String)
+        case postDetail(String)
+
+        var id: String {
+            switch self {
+            case .createReel: return "createReel"
+            case .author(let id): return "author-\(id)"
+            case .postDetail(let id): return "postDetail-\(id)"
+            }
+        }
+    }
+
     @State private var viewModel = ReelsViewModel()
     @State private var selectedPostId: String?
-    @State private var authorToView: String?
-    @State private var detailPostId: IdentifiableString?
-    @State private var showCreateReel = false
+    @State private var activeSheet: ReelsSheet?
 
     var body: some View {
         NavigationStack {
             mainContent
                 .toolbar { toolbarContent }
                 .toolbarBackground(.hidden, for: .navigationBar)
-                .sheet(isPresented: $showCreateReel) { createReelSheet }
-                .sheet(item: authorBinding) { wrapped in
-                    UserProfileView(userId: wrapped.value)
-                }
-                .sheet(item: $detailPostId) { wrapped in
-                    PostDetailView(postId: wrapped.value)
+                .sheet(item: $activeSheet) { sheet in
+                    switch sheet {
+                    case .createReel:
+                        createReelSheet
+                    case .author(let userId):
+                        UserProfileView(userId: userId)
+                    case .postDetail(let postId):
+                        PostDetailView(postId: postId)
+                    }
                 }
                 .task { await loadInitialIfNeeded() }
         }
@@ -47,7 +68,7 @@ struct ReelsView: View {
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
             Button {
-                showCreateReel = true
+                activeSheet = .createReel
             } label: {
                 Image(systemName: "video.badge.plus")
                     .foregroundStyle(.white)
@@ -59,13 +80,6 @@ struct ReelsView: View {
         CreateReelView { newPost in
             viewModel.prepend(newPost)
         }
-    }
-
-    private var authorBinding: Binding<IdentifiableString?> {
-        Binding<IdentifiableString?>(
-            get: { authorToView.map { IdentifiableString(value: $0) } },
-            set: { authorToView = $0?.value }
-        )
     }
 
     private func loadInitialIfNeeded() async {
@@ -85,8 +99,8 @@ struct ReelsView: View {
                             isActive: post.id == selectedPostId,
                             isLiked: viewModel.likedPostIds.contains(post.postId),
                             onToggleLike: { Task { await viewModel.toggleLike(on: post) } },
-                            onOpenComments: { detailPostId = IdentifiableString(value: post.postId) },
-                            onOpenAuthor: { authorToView = post.authorId }
+                            onOpenComments: { activeSheet = .postDetail(post.postId) },
+                            onOpenAuthor: { activeSheet = .author(post.authorId) }
                         )
                         .frame(width: proxy.size.width, height: proxy.size.height)
                         .id(post.id)
