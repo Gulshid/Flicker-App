@@ -6,9 +6,27 @@ import SwiftUI
 /// here (compose button → username search) or from a profile's Message
 /// button (see UserProfileView).
 struct ChatListView: View {
+    /// Single source of truth for this screen's sheet, instead of two
+    /// separate optionals (`openChat` / `showNewMessage`) each with their
+    /// own `.sheet` modifier — see FeedView's FeedSheet for why: multiple
+    /// `.sheet` modifiers in the same NavigationStack can get their
+    /// presentation contexts crossed, so tapping an existing chat row
+    /// could end up presenting the "new message" composer instead (or
+    /// vice versa).
+    private enum ChatListSheet: Identifiable {
+        case newMessage
+        case chat(Chat)
+
+        var id: String {
+            switch self {
+            case .newMessage: return "newMessage"
+            case .chat(let chat): return "chat-\(chat.id ?? chat.chatId)"
+            }
+        }
+    }
+
     @State private var viewModel = ChatListViewModel()
-    @State private var openChat: Chat?
-    @State private var showNewMessage = false
+    @State private var activeSheet: ChatListSheet?
 
     var body: some View {
         NavigationStack {
@@ -26,20 +44,22 @@ struct ChatListView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        showNewMessage = true
+                        activeSheet = .newMessage
                     } label: {
                         Image(systemName: "square.and.pencil")
                     }
                 }
             }
-            .sheet(isPresented: $showNewMessage) {
-                NewMessageView { chat in
-                    openChat = chat
-                }
-            }
-            .sheet(item: $openChat) { chat in
-                NavigationStack {
-                    ChatView(chat: chat)
+            .sheet(item: $activeSheet) { sheet in
+                switch sheet {
+                case .newMessage:
+                    NewMessageView { chat in
+                        activeSheet = .chat(chat)
+                    }
+                case .chat(let chat):
+                    NavigationStack {
+                        ChatView(chat: chat)
+                    }
                 }
             }
             .task { viewModel.startObserving() }
@@ -50,7 +70,7 @@ struct ChatListView: View {
         List {
             ForEach(viewModel.chats) { chat in
                 Button {
-                    openChat = chat
+                    activeSheet = .chat(chat)
                 } label: {
                     ChatRowView(chat: chat, currentUserId: viewModel.currentUserId ?? "")
                 }
