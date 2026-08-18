@@ -123,16 +123,19 @@ struct PostDetailView: View {
 
     @ViewBuilder
     private func postMedia(_ post: Post) -> some View {
-        Group {
-            if post.mediaURLs.count == 1 {
-                mediaImage(post.mediaURLs[0])
-            } else {
-                TabView {
-                    ForEach(post.mediaURLs, id: \.self) { mediaImage($0) }
-                }
-                .tabViewStyle(.page)
-                .frame(maxWidth: .infinity, height: 400)
+        // No wrapping Group here — this function is already @ViewBuilder,
+        // and stacking Group's own generic inference on top of that for
+        // two very differently-modified branches (a single image vs. a
+        // heavily-modified TabView) is what was tripping up the type
+        // checker ("Generic parameter 'V' could not be inferred").
+        if post.mediaURLs.count == 1 {
+            mediaImage(post.mediaURLs[0])
+        } else {
+            TabView {
+                ForEach(post.mediaURLs, id: \.self) { mediaImage($0) }
             }
+            .tabViewStyle(.page)
+            .frame(maxWidth: .infinity, minHeight: 400, maxHeight: 400)
         }
     }
 
