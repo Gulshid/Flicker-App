@@ -1,23 +1,34 @@
 import SwiftUI
 
 struct SignInView: View {
-    @State private var vm = AuthViewModel()
+    @Bindable var vm: AuthViewModel
 
     var body: some View {
-        VStack(spacing: 16) {
-            TextField("Email", text: $vm.email)
-                .textInputAutocapitalization(.never)
-                .keyboardType(.emailAddress)
-                .textFieldStyle(.roundedBorder)
+        VStack(spacing: 14) {
+            BrandTextField(
+                icon: "envelope",
+                placeholder: "Email",
+                text: $vm.email,
+                keyboardType: .emailAddress,
+                textContentType: .username
+            )
 
-            SecureField("Password", text: $vm.password)
-                .textFieldStyle(.roundedBorder)
+            BrandSecureField(
+                placeholder: "Password",
+                text: $vm.password,
+                textContentType: .password
+            )
+
+            HStack {
+                Spacer()
+                Button("Forgot password?") {
+                    Task { await vm.resetPassword() }
+                }
+                .font(.footnote.weight(.medium))
+            }
 
             if let error = vm.errorMessage {
-                Text(error)
-                    .foregroundStyle(.red)
-                    .font(.footnote)
-                    .multilineTextAlignment(.center)
+                InlineErrorBanner(message: error)
             }
 
             Button {
@@ -25,25 +36,39 @@ struct SignInView: View {
             } label: {
                 if vm.isLoading {
                     ProgressView()
-                        .frame(maxWidth: .infinity)
+                        .tint(.white)
                 } else {
                     Text("Sign In")
-                        .frame(maxWidth: .infinity)
                 }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(GradientButtonStyle())
             .disabledWhileLoading(vm.isLoading)
+            .padding(.top, 4)
 
-            Button("Forgot Password?") {
-                Task { await vm.resetPassword() }
-            }
-            .font(.footnote)
+            dividerRow
 
             AppleSignInButton { result in
                 if case .failure(let error) = result {
                     vm.errorMessage = error.localizedDescription
                 }
             }
+            .clipShape(RoundedRectangle(cornerRadius: Brand.cornerRadius, style: .continuous))
         }
     }
+
+    private var dividerRow: some View {
+        HStack(spacing: 12) {
+            Rectangle().fill(Color.primary.opacity(0.1)).frame(height: 1)
+            Text("or")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Rectangle().fill(Color.primary.opacity(0.1)).frame(height: 1)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+#Preview {
+    SignInView(vm: AuthViewModel())
+        .padding()
 }
