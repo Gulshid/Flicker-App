@@ -15,10 +15,17 @@ enum Brand {
         LinearGradient(colors: gradientColors, startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 
-    /// Subtle version used for large backgrounds so text stays readable.
+    /// Pale, fully-opaque tints (NOT low-alpha brand colors) used for large
+    /// full-screen backgrounds, e.g. Splash and Auth. These must be opaque:
+    /// Splash and Auth are layered in a ZStack in RootView during the
+    /// launch transition, so a translucent background would let whichever
+    /// screen is underneath show through mid-crossfade.
+    static let pastelPink = Color(red: 0.99, green: 0.92, blue: 0.95)
+    static let pastelViolet = Color(red: 0.94, green: 0.92, blue: 0.99)
+
     static var backgroundGradient: LinearGradient {
         LinearGradient(
-            colors: [pink.opacity(0.12), violet.opacity(0.10), Color(.systemBackground)],
+            colors: [pastelPink, pastelViolet, Color(.systemBackground)],
             startPoint: .top,
             endPoint: .bottom
         )
