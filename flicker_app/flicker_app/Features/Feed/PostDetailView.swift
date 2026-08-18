@@ -131,7 +131,7 @@ struct PostDetailView: View {
                     ForEach(post.mediaURLs, id: \.self) { mediaImage($0) }
                 }
                 .tabViewStyle(.page)
-                .frame(height: 400)
+                .frame(maxWidth: .infinity, height: 400)
             }
         }
     }
@@ -150,7 +150,12 @@ struct PostDetailView: View {
                 Color.secondary.opacity(0.1)
             }
         }
-        .frame(height: 400)
+        // maxWidth: .infinity is required here — without it, scaledToFit
+        // sizes the image to its native aspect ratio at the fixed height
+        // instead of stretching to the screen width, leaving a gap on
+        // the trailing edge.
+        .frame(maxWidth: .infinity, minHeight: 400, maxHeight: 400)
+        .clipped()
     }
 
     private var comments: some View {

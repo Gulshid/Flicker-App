@@ -4,10 +4,30 @@ import SwiftUI
 /// that lived in MainTabView. Segmented "Following" / "Discover" control
 /// at the top backs the two feed query modes in FirestoreService.
 struct FeedView: View {
+    /// All sheet presentations for this screen are routed through this
+    /// single piece of state (rather than 2-3 separate optionals/bools,
+    /// each with its own `.sheet` modifier). Multiple independent `.sheet`
+    /// modifiers in the same NavigationStack branch can get their
+    /// presentation contexts crossed by SwiftUI — e.g. tapping a post's
+    /// author would sometimes present the post-detail sheet instead of
+    /// the profile sheet. One enum + one `.sheet(item:)` removes that
+    /// ambiguity entirely.
+    private enum FeedSheet: Identifiable {
+        case createPost
+        case author(String)
+        case postDetail(String)
+
+        var id: String {
+            switch self {
+            case .createPost: return "createPost"
+            case .author(let id): return "author-\(id)"
+            case .postDetail(let id): return "postDetail-\(id)"
+            }
+        }
+    }
+
     @State private var viewModel = FeedViewModel()
-    @State private var showCreatePost = false
-    @State private var authorToView: String?
-    @State private var detailPostId: IdentifiableString?
+    @State private var activeSheet: FeedSheet?
 
     var body: some View {
         NavigationStack {
@@ -39,22 +59,23 @@ struct FeedView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        showCreatePost = true
+                        activeSheet = .createPost
                     } label: {
                         Image(systemName: "plus.square")
                     }
                 }
             }
-            .sheet(isPresented: $showCreatePost) {
-                CreatePostView { newPost in
-                    viewModel.prependNewPost(newPost)
+            .sheet(item: $activeSheet) { sheet in
+                switch sheet {
+                case .createPost:
+                    CreatePostView { newPost in
+                        viewModel.prependNewPost(newPost)
+                    }
+                case .author(let userId):
+                    UserProfileView(userId: userId)
+                case .postDetail(let postId):
+                    PostDetailView(postId: postId)
                 }
-            }
-            .sheet(item: Binding(
-                get: { authorToView.map { IdentifiableString(value: $0) } },
-                set: { authorToView = $0?.value }
-            )) { wrapped in
-                UserProfileView(userId: wrapped.value)
             }
             .task { await viewModel.loadInitialIfNeeded() }
         }
@@ -68,8 +89,8 @@ struct FeedView: View {
                         post: post,
                         isLiked: viewModel.likedPostIds.contains(post.postId),
                         onToggleLike: { Task { await viewModel.toggleLike(on: post) } },
-                        onOpenDetail: { openDetail(post) },
-                        onOpenAuthor: { authorToView = post.authorId }
+                        onOpenDetail: { activeSheet = .postDetail(post.postId) },
+                        onOpenAuthor: { activeSheet = .author(post.authorId) }
                     )
                     .task { await viewModel.loadMoreIfNeeded(currentPost: post) }
                     Divider()
@@ -81,15 +102,6 @@ struct FeedView: View {
             }
         }
         .refreshable { await viewModel.refresh() }
-        .sheet(item: $detailPostId) { wrapped in
-            PostDetailView(postId: wrapped.value)
-        }
-    }
-
-    // Wrapping in an Identifiable box since PostDetailView is presented
-    // by post ID (it refetches on appear), not by a whole Post value.
-    private func openDetail(_ post: Post) {
-        detailPostId = IdentifiableString(value: post.postId)
     }
 
     private var emptyState: some View {
@@ -115,10 +127,4 @@ struct FeedView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
     }
-}
-
-/// Small helper so `String` post/author IDs can be used with `.sheet(item:)`.
-struct IdentifiableString: Identifiable {
-    let value: String
-    var id: String { value }
 }
