@@ -55,14 +55,32 @@ final class CreateReelViewModel {
 
     func pickedVideo(_ item: PhotosPickerItem) async {
         state = .loading
-        guard let rawData = try? await item.loadTransferable(type: Data.self) else {
+
+        // Load a file URL rather than raw `Data` — pulling the whole
+        // original clip into memory up front isn't necessary and this
+        // keeps large files off the heap until we're ready for them.
+        guard let picked = try? await item.loadTransferable(type: PickedVideo.self) else {
             state = .failed(message: "Couldn't load that video.")
             return
         }
+        defer { try? FileManager.default.removeItem(at: picked.url) }
+
+        // Transcode/downscale before it ever touches the network. This
+        // is the step that keeps reel uploads fast — without it we'd be
+        // pushing the raw, full-resolution Photos library file, which
+        // can be hundreds of MB.
+        let compressed: Data
+        do {
+            compressed = try await VideoCompressor.compress(sourceURL: picked.url)
+        } catch {
+            state = .failed(message: AppError.compressionFailed.localizedDescription)
+            return
+        }
+
         state = .uploading(progress: 0)
         do {
             let fileName = "\(UUID().uuidString).mp4"
-            let url = try await mediaService.uploadVideo(rawData, fileName: fileName) { [weak self] fraction in
+            let url = try await mediaService.uploadVideo(compressed, fileName: fileName) { [weak self] fraction in
                 Task { @MainActor in
                     self?.state = .uploading(progress: fraction)
                 }
