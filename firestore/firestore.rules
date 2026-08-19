@@ -203,7 +203,17 @@ service cloud.firestore {
     // participants.
     // =================================================================
     match /chats/{chatId} {
-      allow read: if request.auth != null && request.auth.uid in resource.data.participantIds;
+      // `resource == null` covers the "doesn't exist yet" case: Firestore
+      // sets `resource` to null when a `get` targets a document that
+      // isn't there, and referencing `resource.data` on a null resource
+      // fails the rule evaluation (reported to the client as
+      // "permission-denied", not "not-found"). `createOrGetChat` does
+      // exactly this — reads the deterministic chat doc to see if a
+      // thread already exists before creating one — so without this
+      // branch the very first message between two people always failed
+      // here, before the create rule below was ever reached.
+      allow read: if request.auth != null
+        && (resource == null || request.auth.uid in resource.data.participantIds);
 
       allow create: if request.auth != null
         && request.auth.uid in request.resource.data.participantIds
