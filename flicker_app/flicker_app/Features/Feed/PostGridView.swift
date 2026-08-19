@@ -74,17 +74,35 @@ struct PostGridView: View {
 
     @ViewBuilder
     private func thumbnail(for post: Post) -> some View {
-        if let urlString = post.mediaURLs.first.map({ CloudinaryTransformation.thumbnail($0, size: 300) }),
-           let url = URL(string: urlString) {
-            AsyncImage(url: url) { phase in
-                if let image = phase.image {
-                    image.resizable().scaledToFill()
-                } else {
-                    Color.secondary.opacity(0.1)
+        // Video posts: `CloudinaryTransformation.thumbnail` assumes an
+        // image delivery path, which can't decode an mp4 — that was
+        // producing a blank/broken cell here. `videoThumbnail` swaps in
+        // Cloudinary's still-frame extraction instead.
+        let rawURL = post.isVideo
+            ? post.mediaURLs.first.map { CloudinaryTransformation.videoThumbnail($0, size: 300) }
+            : post.mediaURLs.first.map { CloudinaryTransformation.thumbnail($0, size: 300) }
+
+        if let urlString = rawURL, let url = URL(string: urlString) {
+            ZStack(alignment: .topTrailing) {
+                AsyncImage(url: url) { phase in
+                    if let image = phase.image {
+                        image.resizable().scaledToFill()
+                    } else {
+                        Color.secondary.opacity(0.1)
+                    }
+                }
+                .aspectRatio(1, contentMode: .fill)
+                .clipped()
+
+                if post.isVideo {
+                    Image(systemName: "play.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.white)
+                        .padding(5)
+                        .background(.black.opacity(0.35), in: Circle())
+                        .padding(6)
                 }
             }
-            .aspectRatio(1, contentMode: .fill)
-            .clipped()
         } else {
             Color.secondary.opacity(0.1)
                 .aspectRatio(1, contentMode: .fill)

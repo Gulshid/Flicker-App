@@ -22,6 +22,17 @@ enum CloudinaryTransformation {
         insert("w_\(maxWidth),c_limit,q_auto,f_auto", into: url)
     }
 
+    /// Still-frame thumbnail extracted from a video delivery URL. Cloudinary
+    /// serves this off the same `/video/upload/...` path a video secure_url
+    /// already has — swapping the file extension to `.jpg` on an
+    /// otherwise-untouched video URL returns a JPEG frame instead of the
+    /// video itself, no separate upload or transcode needed.
+    static func videoThumbnail(_ url: String, size: Int = 400) -> String {
+        let transformed = insert("w_\(size),h_\(size),c_fill,g_auto,q_auto,f_jpg", into: url)
+        guard let dotRange = transformed.range(of: ".", options: .backwards) else { return transformed }
+        return transformed.replacingCharacters(in: dotRange.lowerBound..<transformed.endIndex, with: ".jpg")
+    }
+
     /// Inserts a transformation segment right after `/upload/` in a
     /// standard Cloudinary delivery URL. If the URL doesn't look like a
     /// Cloudinary URL (e.g. in unit tests, or a placeholder), returns it
