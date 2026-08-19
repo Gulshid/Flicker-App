@@ -128,7 +128,9 @@ struct PostDetailView: View {
         // two very differently-modified branches (a single image vs. a
         // heavily-modified TabView) is what was tripping up the type
         // checker ("Generic parameter 'V' could not be inferred").
-        if post.mediaURLs.count == 1 {
+        if post.isVideo, let urlString = post.mediaURLs.first {
+            videoMedia(urlString)
+        } else if post.mediaURLs.count == 1 {
             mediaImage(post.mediaURLs[0])
         } else {
             TabView {
@@ -137,6 +139,23 @@ struct PostDetailView: View {
             .tabViewStyle(.page)
             .frame(maxWidth: .infinity, minHeight: 400, maxHeight: 400)
         }
+    }
+
+    // Same reason as PostCardView: a reel's mediaURLs holds an mp4, not
+    // an image, so it can't route through AsyncImage. Detail view shows
+    // standard playback controls (unlike the feed card's chromeless
+    // autoplay) since the person has deliberately opened this post.
+    private func videoMedia(_ urlString: String) -> some View {
+        Group {
+            if let url = URL(string: urlString) {
+                LoopingVideoPlayerView(url: url, isMuted: false, isPlaying: true)
+            } else {
+                Color.secondary.opacity(0.1)
+                    .overlay(Image(systemName: "exclamationmark.triangle").foregroundStyle(.secondary))
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 400, maxHeight: 400)
+        .clipped()
     }
 
     private func mediaImage(_ urlString: String) -> some View {
