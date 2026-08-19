@@ -75,7 +75,9 @@ struct PostCardView: View {
     @ViewBuilder
     private var media: some View {
         Group {
-            if post.mediaURLs.count == 1 {
+            if post.isVideo, let urlString = post.mediaURLs.first {
+                videoMedia(urlString)
+            } else if post.mediaURLs.count == 1 {
                 mediaImage(post.mediaURLs[0])
             } else {
                 TabView {
@@ -90,6 +92,26 @@ struct PostCardView: View {
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { onToggleLike() }
         .onTapGesture(count: 1) { onOpenDetail() }
+    }
+
+    // Reels are regular posts with `hasVideo: true` and a single video
+    // URL in `mediaURLs` — an mp4, not an image, so it can't go through
+    // `AsyncImage` (that's what was producing the "can't load this
+    // image" triangle here). Reuses the same chromeless looping player
+    // the Reels tab uses; feed cards autoplay muted and don't loop-pause
+    // on scroll since PostCardView has no visibility tracking (unlike
+    // ReelPlayerView's `isActive`).
+    private func videoMedia(_ urlString: String) -> some View {
+        Group {
+            if let url = URL(string: urlString) {
+                LoopingVideoPlayerView(url: url, isMuted: true, isPlaying: true)
+            } else {
+                Color.secondary.opacity(0.1)
+                    .overlay(Image(systemName: "exclamationmark.triangle").foregroundStyle(.secondary))
+            }
+        }
+        .frame(height: 360)
+        .clipped()
     }
 
     private func mediaImage(_ urlString: String) -> some View {

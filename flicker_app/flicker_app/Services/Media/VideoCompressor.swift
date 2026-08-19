@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreTransferable
 import Foundation
 
 /// Client-side transcode + downscale before anything goes over the
