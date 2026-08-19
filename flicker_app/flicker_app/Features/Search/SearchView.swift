@@ -104,9 +104,16 @@ struct SearchView: View {
 
     @ViewBuilder
     private func exploreThumbnail(for post: Post) -> some View {
+        // Same issue as PostGridView: `thumbnail(...)` assumes an image
+        // delivery path and can't decode an mp4, which is why video
+        // cells were rendering blank even though the video badge showed
+        // correctly. `videoThumbnail` extracts a real JPEG frame instead.
+        let rawURL = post.isVideo
+            ? post.mediaURLs.first.map { CloudinaryTransformation.videoThumbnail($0, size: 300) }
+            : post.mediaURLs.first.map { CloudinaryTransformation.thumbnail($0, size: 300) }
+
         ZStack(alignment: .topTrailing) {
-            if let urlString = post.mediaURLs.first.map({ CloudinaryTransformation.thumbnail($0, size: 300) }),
-               let url = URL(string: urlString) {
+            if let urlString = rawURL, let url = URL(string: urlString) {
                 AsyncImage(url: url) { phase in
                     if let image = phase.image {
                         image.resizable().scaledToFill()
